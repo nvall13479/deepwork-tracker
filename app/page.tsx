@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { supabase } from "@/lib/supabase";
 
 interface CategoryMap {
   [key: string]: number;
@@ -31,23 +32,42 @@ export default function Home() {
   const [showPrompt, setShowPrompt] = useState<boolean>(false);
   const [selectedCategory, setSelectedCategory] = useState<string>("VS Code / Προγραμματισμός");
 
-  // 1. Φόρτωση δεδομένων από το localStorage ΜΟΝΟ στον client (αποφυγή Hydration Error)
+  // 1. Φόρτωση δεδομένων από το Supabase
   useEffect(() => {
-    setMounted(true);
-    const saved = localStorage.getItem("deepwork_data");
-    if (saved) {
-      try {
-        setData(JSON.parse(saved));
-      } catch (e) {
-        console.error("Error loading data from localStorage", e);
+    const loadDataFromCloud = async () => {
+      setMounted(true);
+      const { data: logs, error } = await supabase
+        .from('productivity_logs')
+        .select('data')
+        .eq('id', 1)
+        .single();
+
+      if (error) {
+        console.error("Error loading data from Supabase:", error);
       }
-    }
+
+      if (logs && logs.data) {
+        setData(logs.data);
+      }
+    };
+
+    loadDataFromCloud();
   }, []);
 
-  // 2. Αποθήκευση στο localStorage ΜΟΝΟ αφού έχει γίνει mount
+  // 2. Αποθήκευση στο Supabase σε κάθε αλλαγή
   useEffect(() => {
     if (mounted) {
-      localStorage.setItem("deepwork_data", JSON.stringify(data));
+      const saveDataToCloud = async () => {
+        const { error } = await supabase
+          .from('productivity_logs')
+          .upsert({ id: 1, data: data });
+
+        if (error) {
+          console.error("Error saving data to Supabase:", error);
+        }
+      };
+
+      saveDataToCloud();
     }
   }, [data, mounted]);
 
@@ -70,9 +90,7 @@ export default function Home() {
   }, [mounted, isActive, showPrompt]);
 
   // Browser Notification
-// Βελτιωμένη Browser Notification με Ήχο και Focus στο Click
   const triggerNotification = () => {
-    // 1. Αναπαραγωγή ήχου ειδοποίησης (Beep)
     try {
       const audioCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
       const osc = audioCtx.createOscillator();
@@ -80,7 +98,7 @@ export default function Home() {
       osc.connect(gain);
       gain.connect(audioCtx.destination);
       osc.type = "sine";
-      osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5 tone
+      osc.frequency.setValueAtTime(587.33, audioCtx.currentTime);
       gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
       osc.start();
       osc.stop(audioCtx.currentTime + 0.3);
@@ -88,15 +106,13 @@ export default function Home() {
       console.error("Audio error", e);
     }
 
-    // 2. Εμφάνιση Ειδοποίησης
     if (typeof window !== "undefined" && "Notification" in window) {
       if (Notification.permission === "granted") {
         const notif = new Notification("🧠 Deep Work Check-in", {
           body: "Πέρασαν 2 λεπτά! Κάνε κλικ εδώ για να απαντήσεις.",
-          requireInteraction: true, // Κρατάει την ειδοποίηση ανοιχτή στην οθόνη μέχρι να την πατήσεις!
+          requireInteraction: true,
         });
 
-        // Όταν κάνεις κλικ πάνω στην ειδοποίηση, σε φέρνει στο Tab του Tracker
         notif.onclick = () => {
           window.focus();
           notif.close();
@@ -104,13 +120,13 @@ export default function Home() {
       }
     }
   };
+
   const requestNotificationPermission = () => {
     if (typeof window !== "undefined" && "Notification" in window) {
       Notification.requestPermission();
     }
   };
 
-  // Απάντηση στο Check-in (ON / OFF)
   const handleCheckin = (isOff: boolean) => {
     const intervalMins = CHECK_INTERVAL_SEC / 60;
 
@@ -125,7 +141,7 @@ export default function Home() {
         };
       } else {
         updated.onMinutes += intervalMins;
-        updated.currentOffStreak = 0; // Μηδενισμός streak αν είσαι ON
+        updated.currentOffStreak = 0;
         updated.onCategories = {
           ...updated.onCategories,
           [selectedCategory]: (updated.onCategories[selectedCategory] || 0) + intervalMins,
@@ -154,7 +170,6 @@ export default function Home() {
     return `${m}:${s}`;
   };
 
-  // Αν η εφαρμογή δεν έχει φορτώσει ακόμα στον client, δείξε loading για αποφυγή flicker/hydration bug
   if (!mounted) {
     return (
       <main className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center font-sans">
