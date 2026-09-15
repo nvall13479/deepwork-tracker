@@ -16,6 +16,7 @@ interface TrackerData {
 }
 
 const CHECK_INTERVAL_SEC = 120; // 2 λεπτά
+const GOAL_MINUTES = 300; // Στόχος 5 ώρες Deep Work (5 * 60 = 300 λεπτά)
 
 export default function Home() {
   const [data, setData] = useState<TrackerData>({
@@ -27,6 +28,7 @@ export default function Home() {
   });
 
   const [mounted, setMounted] = useState<boolean>(false);
+  const [isLoaded, setIsLoaded] = useState<boolean>(false);
   const [isActive, setIsActive] = useState<boolean>(true);
   const [timeLeft, setTimeLeft] = useState<number>(CHECK_INTERVAL_SEC);
   const [showPrompt, setShowPrompt] = useState<boolean>(false);
@@ -36,19 +38,23 @@ export default function Home() {
   useEffect(() => {
     const loadDataFromCloud = async () => {
       setMounted(true);
+      console.log("☁️ [Supabase] Προσπάθεια ανάγνωσης...");
+
       const { data: logs, error } = await supabase
-        .from('productivity_logs')
-        .select('data')
-        .eq('id', 1)
+        .from("productivity_logs")
+        .select("data")
+        .eq("id", 1)
         .single();
 
       if (error) {
-        console.error("Error loading data from Supabase:", error);
-      }
-
-      if (logs && logs.data) {
+        console.error("❌ [Supabase Read Error]:", error);
+      } else if (logs && logs.data) {
+        console.log("✅ [Supabase Read Success] Φορτώθηκαν:", logs.data);
         setData(logs.data);
+      } else {
+        console.warn("⚠️ [Supabase Read] Δεν βρέθηκαν δεδομένα για id=1");
       }
+      setIsLoaded(true);
     };
 
     loadDataFromCloud();
@@ -56,24 +62,29 @@ export default function Home() {
 
   // 2. Αποθήκευση στο Supabase σε κάθε αλλαγή
   useEffect(() => {
-    if (mounted) {
+    if (mounted && isLoaded) {
       const saveDataToCloud = async () => {
-        const { error } = await supabase
-          .from('productivity_logs')
-          .upsert({ id: 1, data: data });
+        console.log("☁️ [Supabase] Προσπάθεια αποθήκευσης:", data);
+
+        const { data: result, error } = await supabase
+          .from("productivity_logs")
+          .upsert({ id: 1, data: data })
+          .select();
 
         if (error) {
-          console.error("Error saving data to Supabase:", error);
+          console.error("❌ [Supabase Save Error]:", error);
+        } else {
+          console.log("✅ [Supabase Save Success] Αποθηκεύτηκαν επιτυχώς:", result);
         }
       };
 
       saveDataToCloud();
     }
-  }, [data, mounted]);
+  }, [data, mounted, isLoaded]);
 
   // 3. Χρονόμετρο countdown 2 λεπτών
   useEffect(() => {
-    if (!mounted || !isActive || showPrompt) return;
+    if (!mounted || !isLoaded || !isActive || showPrompt) return;
 
     const timer = setInterval(() => {
       setTimeLeft((prev) => {
@@ -87,12 +98,13 @@ export default function Home() {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [mounted, isActive, showPrompt]);
+  }, [mounted, isLoaded, isActive, showPrompt]);
 
   // Browser Notification
   const triggerNotification = () => {
     try {
-      const audioCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+      const audioCtx = new (window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
       osc.connect(gain);
@@ -154,6 +166,17 @@ export default function Home() {
     setTimeLeft(CHECK_INTERVAL_SEC);
   };
 
+  // --- ΥΠΟΛΟΓΙΣΜΟΙ ΔΕΔΟΜΕΝΩΝ & ΣΤΟΧΟΥ ---
+
+  // Καθαρός χρόνος Deep Work (αφαιρούμε Ύπνο και Διαλείμματα εκτός PC)
+  const sleepMinutes = data.onCategories["Βραδινός Ύπνος"] || 0;
+  const breakMinutes = data.onCategories["Χρόνος εκτός PC (Διάλειμμα)"] || 0;
+  const pureDeepWorkMinutes = Math.max(0, data.onMinutes - sleepMinutes - breakMinutes);
+
+  // Υπόλοιπο για τον στόχο των 5 ωρών
+  const remainingGoalMinutes = Math.max(0, GOAL_MINUTES - pureDeepWorkMinutes);
+  const goalProgressPct = Math.min(100, (pureDeepWorkMinutes / GOAL_MINUTES) * 100);
+
   const totalMinutes = data.onMinutes + data.offMinutes;
   const productivityScore =
     totalMinutes > 0 ? ((data.onMinutes / totalMinutes) * 100).toFixed(1) : "100.0";
@@ -170,7 +193,7 @@ export default function Home() {
     return `${m}:${s}`;
   };
 
-  if (!mounted) {
+  if (!mounted || !isLoaded) {
     return (
       <main className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center font-sans">
         <div className="text-sm text-slate-400 animate-pulse">Φόρτωση Deep Work Tracker...</div>
@@ -203,6 +226,40 @@ export default function Home() {
             >
               {isActive ? "Παύση" : "Έναρξη"}
             </button>
+          </div>
+        </div>
+
+        {/* Target 5 Hours Deep Work Banner */}
+        <div className="bg-gradient-to-r from-indigo-950 via-slate-900 to-slate-900 border border-indigo-500/30 p-5 rounded-xl space-y-3 shadow-lg">
+          <div className="flex justify-between items-center">
+            <div>
+              <span className="text-xs font-semibold uppercase tracking-wider text-indigo-400">
+                🎯 Ημερήσιος Στόχος Deep Work (5 ώρες)
+              </span>
+              <div className="text-2xl font-extrabold text-white mt-1">
+                {formatMins(pureDeepWorkMinutes)} <span className="text-sm font-normal text-slate-400">/ 5ώ 0λ</span>
+              </div>
+            </div>
+            <div className="text-right">
+              {remainingGoalMinutes > 0 ? (
+                <div>
+                  <span className="text-xs text-slate-400">Απομένουν ακόμη:</span>
+                  <div className="text-lg font-bold text-amber-400">{formatMins(remainingGoalMinutes)}</div>
+                </div>
+              ) : (
+                <span className="inline-block bg-emerald-500/20 text-emerald-300 text-xs px-3 py-1.5 rounded-full border border-emerald-500/50 font-bold">
+                  🎉 Ο στόχος επιτεύχθηκε!
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Progress Bar */}
+          <div className="w-full bg-slate-800 h-3 rounded-full overflow-hidden border border-slate-700/50">
+            <div
+              className="bg-gradient-to-r from-indigo-500 to-emerald-400 h-full transition-all duration-500"
+              style={{ width: `${goalProgressPct}%` }}
+            ></div>
           </div>
         </div>
 
@@ -265,9 +322,9 @@ export default function Home() {
           </div>
 
           <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl text-center">
-            <span className="text-xs text-slate-400 font-semibold uppercase">Χρόνος ON</span>
+            <span className="text-xs text-slate-400 font-semibold uppercase">Συνολικός Χρόνος ON</span>
             <div className="text-3xl font-bold text-emerald-400 my-2">{formatMins(data.onMinutes)}</div>
-            <span className="text-xs text-slate-500">Παραγωγικός / Ύπνος</span>
+            <span className="text-xs text-slate-500">Περιλαμβάνει Ύπνο & Διαλείμματα</span>
           </div>
 
           <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl text-center">
