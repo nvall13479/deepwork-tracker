@@ -8,6 +8,7 @@ interface CategoryMap {
 }
 
 interface TrackerData {
+  lastDate?: string;
   onMinutes: number;
   offMinutes: number;
   currentOffStreak: number;
@@ -15,12 +16,22 @@ interface TrackerData {
   offCategories: CategoryMap;
 }
 
+interface DailyHistoryRecord {
+  id: number;
+  date: string;
+  pure_deep_work_minutes: number;
+  productivity_score: number;
+  goal_achieved: boolean;
+}
+
 const CHECK_INTERVAL_SEC = 120; // 2 λεπτά
-const GOAL_MINUTES = 300; // Στόχος 5 ώρες Deep Work (5 * 60 = 300 λεπτά)
+const GOAL_MINUTES = 300; // Στόχος 5 ώρες Deep Work (300 λεπτά)
 const AUTO_CHECKIN_SEC = 10; // 10 δευτερόλεπτα διορία για απάντηση
+const EXCLUDED_CATEGORIES = ["Βραδινός Ύπνος", "Χρόνος εκτός PC (Διάλειμμα)"];
 
 export default function Home() {
   const [data, setData] = useState<TrackerData>({
+    lastDate: new Date().toISOString().split("T")[0],
     onMinutes: 0,
     offMinutes: 0,
     currentOffStreak: 0,
@@ -28,6 +39,7 @@ export default function Home() {
     offCategories: {},
   });
 
+  const [history, setHistory] = useState<DailyHistoryRecord[]>([]);
   const [mounted, setMounted] = useState<boolean>(false);
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
   const [isActive, setIsActive] = useState<boolean>(true);
@@ -36,17 +48,29 @@ export default function Home() {
   const [autoTimeoutLeft, setAutoTimeoutLeft] = useState<number>(AUTO_CHECKIN_SEC);
   const [selectedCategory, setSelectedCategory] = useState<string>("VS Code / Προγραμματισμός");
 
-  // Ref για πρόσβαση στην τρέχουσα επιλεγμένη κατηγορία μέσα στο timer
   const selectedCategoryRef = useRef(selectedCategory);
   useEffect(() => {
     selectedCategoryRef.current = selectedCategory;
   }, [selectedCategory]);
 
-  // 1. Φόρτωση δεδομένων από το Supabase
+  // Φόρτωση Ιστορικού
+  const loadHistory = async () => {
+    const { data: historyLogs, error } = await supabase
+      .from("daily_history")
+      .select("*")
+      .order("date", { ascending: false })
+      .limit(10);
+
+    if (!error && historyLogs) {
+      setHistory(historyLogs);
+    }
+  };
+
+  // 1. Φόρτωση δεδομένων από το Supabase & Έλεγχος αλλαγής ημερομηνίας
   useEffect(() => {
     const loadDataFromCloud = async () => {
       setMounted(true);
-      console.log("☁️ [Supabase] Προσπάθεια ανάγνωσης...");
+      const today = new Date().toISOString().split("T")[0];
 
       const { data: logs, error } = await supabase
         .from("productivity_logs")
@@ -54,36 +78,45 @@ export default function Home() {
         .eq("id", 1)
         .single();
 
-      if (error) {
-        console.error("❌ [Supabase Read Error]:", error);
-      } else if (logs && logs.data) {
-        console.log("✅ [Supabase Read Success] Φορτώθηκαν:", logs.data);
-        setData(logs.data);
-      } else {
-        console.warn("⚠️ [Supabase Read] Δεν βρέθηκαν δεδομένα για id=1");
+      if (!error && logs && logs.data) {
+        const cloudData: TrackerData = logs.data;
+        const lastDate = cloudData.lastDate || today;
+
+        // Αν άλλαξε η ημερομηνία αυτόματα, αποθηκεύουμε την προηγούμενη ημέρα στο ιστορικό και κάνουμε reset
+        if (lastDate !== today) {
+          await saveSessionToHistory(cloudData, lastDate);
+          const freshData: TrackerData = {
+            lastDate: today,
+            onMinutes: 0,
+            offMinutes: 0,
+            currentOffStreak: 0,
+            onCategories: { "Βραδινός Ύπνος": 480 },
+            offCategories: {},
+          };
+          setData(freshData);
+          await supabase.from("productivity_logs").upsert({ id: 1, data: freshData });
+        } else {
+          setData(cloudData);
+        }
       }
+
+      await loadHistory();
       setIsLoaded(true);
     };
 
     loadDataFromCloud();
   }, []);
 
-  // 2. Αποθήκευση στο Supabase σε κάθε αλλαγή
+  // 2. Αποθήκευση τρέχουσας συνεδρίας στο Supabase
   useEffect(() => {
     if (mounted && isLoaded) {
       const saveDataToCloud = async () => {
-        console.log("☁️ [Supabase] Προσπάθεια αποθήκευσης:", data);
+        const today = new Date().toISOString().split("T")[0];
+        const dataToSave = { ...data, lastDate: today };
 
-        const { data: result, error } = await supabase
+        await supabase
           .from("productivity_logs")
-          .upsert({ id: 1, data: data })
-          .select();
-
-        if (error) {
-          console.error("❌ [Supabase Save Error]:", error);
-        } else {
-          console.log("✅ [Supabase Save Success] Αποθηκεύτηκαν επιτυχώς:", result);
-        }
+          .upsert({ id: 1, data: dataToSave });
       };
 
       saveDataToCloud();
@@ -116,7 +149,6 @@ export default function Home() {
     const autoTimer = setInterval(() => {
       setAutoTimeoutLeft((prev) => {
         if (prev <= 1) {
-          // Αν περάσουν 10 δευτερόλεπτα χωρίς απάντηση -> Αυτόματο ON
           handleCheckin(false);
           return AUTO_CHECKIN_SEC;
         }
@@ -127,7 +159,6 @@ export default function Home() {
     return () => clearInterval(autoTimer);
   }, [showPrompt]);
 
-  // Browser Notification
   const triggerNotification = () => {
     try {
       const audioCtx = new (window.AudioContext ||
@@ -194,11 +225,51 @@ export default function Home() {
     setTimeLeft(CHECK_INTERVAL_SEC);
   };
 
+  // Αποθήκευση Συνεδρίας στο Ιστορικό
+  const saveSessionToHistory = async (sessionData: TrackerData, sessionDate: string) => {
+    const pureMins = Object.entries(sessionData.onCategories).reduce(
+      (acc, [cat, mins]) => (EXCLUDED_CATEGORIES.includes(cat) ? acc : acc + mins),
+      0
+    );
+    const totalMins = sessionData.onMinutes + sessionData.offMinutes;
+    const score = totalMins > 0 ? Number(((sessionData.onMinutes / totalMins) * 100).toFixed(1)) : 100;
+    const isGoalAchieved = pureMins >= GOAL_MINUTES;
+
+    await supabase.from("daily_history").upsert({
+      date: sessionDate,
+      pure_deep_work_minutes: pureMins,
+      productivity_score: score,
+      goal_achieved: isGoalAchieved,
+    });
+
+    await loadHistory();
+  };
+
+  // Κουμπί Χειροκίνητου Τέλους Ημέρας / Reset
+  const handleEndDay = async () => {
+    if (!confirm("Είσαι σίγουρος ότι θέλεις να τερματίσεις τη σημερινή συνεδρία και να την αποθηκεύσεις στο ιστορικό;")) {
+      return;
+    }
+
+    const today = new Date().toISOString().split("T")[0];
+    await saveSessionToHistory(data, today);
+
+    const freshData: TrackerData = {
+      lastDate: today,
+      onMinutes: 0,
+      offMinutes: 0,
+      currentOffStreak: 0,
+      onCategories: { "Βραδινός Ύπνος": 480 },
+      offCategories: {},
+    };
+
+    setData(freshData);
+    await supabase.from("productivity_logs").upsert({ id: 1, data: freshData });
+    alert("Η συνεδρία αποθηκεύτηκε στο ιστορικό! Νέα ημέρα ξεκίνησε.");
+  };
+
   // --- ΥΠΟΛΟΓΙΣΜΟΙ ΔΕΔΟΜΕΝΩΝ & ΣΤΟΧΟΥ ---
 
-// Καθαρός χρόνος Deep Work (Άθροισμα όλων των κατηγοριών ON εκτός από Ύπνο & Διαλείμματα)
-  const EXCLUDED_CATEGORIES = ["Βραδινός Ύπνος", "Χρόνος εκτός PC (Διάλειμμα)"];
-  
   const pureDeepWorkMinutes = Object.entries(data.onCategories).reduce(
     (acc, [cat, mins]) => (EXCLUDED_CATEGORIES.includes(cat) ? acc : acc + mins),
     0
@@ -255,6 +326,12 @@ export default function Home() {
               }`}
             >
               {isActive ? "Παύση" : "Έναρξη"}
+            </button>
+            <button
+              onClick={handleEndDay}
+              className="text-xs px-3 py-1.5 bg-rose-900/60 hover:bg-rose-800 text-rose-200 border border-rose-700 font-bold rounded transition"
+            >
+              🌙 Τέλος Ημέρας
             </button>
           </div>
         </div>
@@ -416,6 +493,51 @@ export default function Home() {
               )}
             </ul>
           </div>
+        </div>
+
+        {/* Daily History Section */}
+        <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl space-y-3">
+          <h3 className="text-sm font-semibold text-indigo-400 border-b border-slate-800 pb-2 flex justify-between items-center">
+            <span>📅 Ιστορικό Προηγούμενων Ημερών</span>
+            <span className="text-xs text-slate-500 font-normal">Τελευταίες 10 ημέρες</span>
+          </h3>
+
+          {history.length === 0 ? (
+            <p className="text-xs text-slate-500 italic">Δεν υπάρχει ακόμα αποθηκευμένο ιστορικό.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-300">
+                <thead className="bg-slate-800/50 text-slate-400 uppercase">
+                  <tr>
+                    <th className="p-2.5 rounded-l">Ημερομηνία</th>
+                    <th className="p-2.5">Deep Work</th>
+                    <th className="p-2.5">Score</th>
+                    <th className="p-2.5 rounded-r">Στόχος (5ώ)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/50">
+                  {history.map((rec) => (
+                    <tr key={rec.id} className="hover:bg-slate-800/30 transition">
+                      <td className="p-2.5 font-mono text-slate-200">{rec.date}</td>
+                      <td className="p-2.5 font-bold text-emerald-400">{formatMins(rec.pure_deep_work_minutes)}</td>
+                      <td className="p-2.5 font-mono text-indigo-400">{rec.productivity_score}%</td>
+                      <td className="p-2.5">
+                        {rec.goal_achieved ? (
+                          <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 rounded font-bold">
+                            ✅ Επιτεύχθηκε
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 bg-slate-800 text-slate-400 border border-slate-700 rounded">
+                            ❌ Εκτός στόχου
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
       </div>
