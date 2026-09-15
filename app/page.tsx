@@ -27,7 +27,6 @@ interface DailyHistoryRecord {
 const CHECK_INTERVAL_SEC = 120; // 2 λεπτά
 const GOAL_MINUTES = 300; // Στόχος 5 ώρες Deep Work (300 λεπτά)
 const AUTO_CHECKIN_SEC = 10; // 10 δευτερόλεπτα διορία για απάντηση
-const EXCLUDED_CATEGORIES = ["Βραδινός Ύπνος", "Χρόνος εκτός PC (Διάλειμμα)"];
 
 export default function Home() {
   const [data, setData] = useState<TrackerData>({
@@ -35,7 +34,7 @@ export default function Home() {
     onMinutes: 0,
     offMinutes: 0,
     currentOffStreak: 0,
-    onCategories: { "Βραδινός Ύπνος": 480 },
+    onCategories: {},
     offCategories: {},
   });
 
@@ -90,7 +89,7 @@ export default function Home() {
             onMinutes: 0,
             offMinutes: 0,
             currentOffStreak: 0,
-            onCategories: { "Βραδινός Ύπνος": 480 },
+            onCategories: {},
             offCategories: {},
           };
           setData(freshData);
@@ -227,10 +226,7 @@ export default function Home() {
 
   // Αποθήκευση Συνεδρίας στο Ιστορικό
   const saveSessionToHistory = async (sessionData: TrackerData, sessionDate: string) => {
-    const pureMins = Object.entries(sessionData.onCategories).reduce(
-      (acc, [cat, mins]) => (EXCLUDED_CATEGORIES.includes(cat) ? acc : acc + mins),
-      0
-    );
+    const pureMins = sessionData.onMinutes;
     const totalMins = sessionData.onMinutes + sessionData.offMinutes;
     const score = totalMins > 0 ? Number(((sessionData.onMinutes / totalMins) * 100).toFixed(1)) : 100;
     const isGoalAchieved = pureMins >= GOAL_MINUTES;
@@ -259,7 +255,7 @@ export default function Home() {
       onMinutes: 0,
       offMinutes: 0,
       currentOffStreak: 0,
-      onCategories: { "Βραδινός Ύπνος": 480 },
+      onCategories: {},
       offCategories: {},
     };
 
@@ -270,11 +266,7 @@ export default function Home() {
 
   // --- ΥΠΟΛΟΓΙΣΜΟΙ ΔΕΔΟΜΕΝΩΝ & ΣΤΟΧΟΥ ---
 
-  const pureDeepWorkMinutes = Object.entries(data.onCategories).reduce(
-    (acc, [cat, mins]) => (EXCLUDED_CATEGORIES.includes(cat) ? acc : acc + mins),
-    0
-  );
-
+  const pureDeepWorkMinutes = data.onMinutes;
   const remainingGoalMinutes = Math.max(0, GOAL_MINUTES - pureDeepWorkMinutes);
   const goalProgressPct = Math.min(100, (pureDeepWorkMinutes / GOAL_MINUTES) * 100);
 
@@ -434,9 +426,9 @@ export default function Home() {
           </div>
 
           <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl text-center">
-            <span className="text-xs text-slate-400 font-semibold uppercase">Συνολικός Χρόνος ON</span>
+            <span className="text-xs text-slate-400 font-semibold uppercase">Χρόνος ON</span>
             <div className="text-3xl font-bold text-emerald-400 my-2">{formatMins(data.onMinutes)}</div>
-            <span className="text-xs text-slate-500">Περιλαμβάνει Ύπνο & Διαλείμματα</span>
+            <span className="text-xs text-slate-500">Καθαρός Χρόνος Εστίασης</span>
           </div>
 
           <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl text-center">
@@ -467,12 +459,16 @@ export default function Home() {
               ✅ Αναλυτικός χρόνος ON
             </h3>
             <ul className="space-y-2 text-sm">
-              {Object.entries(data.onCategories).map(([cat, mins]) => (
-                <li key={cat} className="flex justify-between text-slate-300 border-b border-slate-800/50 pb-1">
-                  <span>{cat}</span>
-                  <span className="font-mono font-bold text-emerald-400">{formatMins(mins)}</span>
-                </li>
-              ))}
+              {Object.entries(data.onCategories).length === 0 ? (
+                <li className="text-slate-500 text-xs italic">Καμία καταγραφή ακόμα ⏱️</li>
+              ) : (
+                Object.entries(data.onCategories).map(([cat, mins]) => (
+                  <li key={cat} className="flex justify-between text-slate-300 border-b border-slate-800/50 pb-1">
+                    <span>{cat}</span>
+                    <span className="font-mono font-bold text-emerald-400">{formatMins(mins)}</span>
+                  </li>
+                ))
+              )}
             </ul>
           </div>
 
