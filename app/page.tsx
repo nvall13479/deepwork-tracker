@@ -7,13 +7,22 @@ interface CategoryMap {
   [key: string]: number;
 }
 
-interface TrackerData {
-  lastDate?: string;
+interface SessionData {
   onMinutes: number;
   offMinutes: number;
-  currentOffStreak: number;
   onCategories: CategoryMap;
   offCategories: CategoryMap;
+}
+
+interface TrackerData {
+  lastDate?: string;
+  isSessionActive: boolean;
+  dailyOnMinutes: number;
+  dailyOffMinutes: number;
+  dailyOnCategories: CategoryMap;
+  dailyOffCategories: CategoryMap;
+  currentSession: SessionData;
+  currentOffStreak: number;
 }
 
 interface DailyHistoryRecord {
@@ -28,20 +37,27 @@ const CHECK_INTERVAL_SEC = 120; // 2 λεπτά
 const GOAL_MINUTES = 300; // Στόχος 5 ώρες Deep Work (300 λεπτά)
 const AUTO_CHECKIN_SEC = 10; // 10 δευτερόλεπτα διορία για απάντηση
 
-export default function Home() {
-  const [data, setData] = useState<TrackerData>({
-    lastDate: new Date().toISOString().split("T")[0],
+const DEFAULT_TRACKER_DATA: TrackerData = {
+  lastDate: new Date().toISOString().split("T")[0],
+  isSessionActive: false,
+  dailyOnMinutes: 0,
+  dailyOffMinutes: 0,
+  dailyOnCategories: {},
+  dailyOffCategories: {},
+  currentSession: {
     onMinutes: 0,
     offMinutes: 0,
-    currentOffStreak: 0,
     onCategories: {},
     offCategories: {},
-  });
+  },
+  currentOffStreak: 0,
+};
 
+export default function Home() {
+  const [data, setData] = useState<TrackerData>(DEFAULT_TRACKER_DATA);
   const [history, setHistory] = useState<DailyHistoryRecord[]>([]);
   const [mounted, setMounted] = useState<boolean>(false);
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
-  const [isActive, setIsActive] = useState<boolean>(true);
   const [timeLeft, setTimeLeft] = useState<number>(CHECK_INTERVAL_SEC);
   const [showPrompt, setShowPrompt] = useState<boolean>(false);
   const [autoTimeoutLeft, setAutoTimeoutLeft] = useState<number>(AUTO_CHECKIN_SEC);
@@ -62,6 +78,27 @@ export default function Home() {
 
     if (!error && historyLogs) {
       setHistory(historyLogs);
+      return historyLogs;
+    }
+    return [];
+  };
+
+  // Διαγραφή Εγγραφής από το Ιστορικό
+  const handleDeleteHistory = async (id: number) => {
+    if (!confirm("Είσαι σίγουρος ότι θέλεις να διαγράψεις αυτή την εγγραφή από το ιστορικό;")) {
+      return;
+    }
+
+    const { error } = await supabase
+      .from("daily_history")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      console.error("❌ [Supabase Delete Error]:", error);
+      alert("Σφάλμα κατά τη διαγραφή της εγγραφής.");
+    } else {
+      await loadHistory();
     }
   };
 
@@ -71,42 +108,63 @@ export default function Home() {
       setMounted(true);
       const today = new Date().toISOString().split("T")[0];
 
+      // Πρώτα φορτώνουμε το ιστορικό
+      const historyLogs = await loadHistory();
+      const todayHistoryRecord = historyLogs.find((h: DailyHistoryRecord) => h.date === today);
+
       const { data: logs, error } = await supabase
         .from("productivity_logs")
         .select("data")
         .eq("id", 1)
         .single();
 
+      let initialData: TrackerData = { ...DEFAULT_TRACKER_DATA, lastDate: today };
+
       if (!error && logs && logs.data) {
-        const cloudData: TrackerData = logs.data;
+        const cloudData: TrackerData = {
+          ...DEFAULT_TRACKER_DATA,
+          ...logs.data,
+          currentSession: {
+            ...DEFAULT_TRACKER_DATA.currentSession,
+            ...(logs.data.currentSession || {}),
+          },
+        };
+
         const lastDate = cloudData.lastDate || today;
 
-        // Αν άλλαξε η ημερομηνία αυτόματα, αποθηκεύουμε την προηγούμενη ημέρα στο ιστορικό και κάνουμε reset
         if (lastDate !== today) {
-          await saveSessionToHistory(cloudData, lastDate);
-          const freshData: TrackerData = {
-            lastDate: today,
-            onMinutes: 0,
-            offMinutes: 0,
-            currentOffStreak: 0,
-            onCategories: {},
-            offCategories: {},
-          };
-          setData(freshData);
-          await supabase.from("productivity_logs").upsert({ id: 1, data: freshData });
+          // Αν η ημερομηνία άλλαξε, αποθηκεύουμε την προηγούμενη ημέρα
+          await saveDayToHistory(cloudData, lastDate);
+
+          // Αν υπάρχει ήδη εγγραφή για τη σημερινή μέρα στο ιστορικό, ανακτούμε τα λεπτά
+          if (todayHistoryRecord) {
+            initialData = {
+              ...DEFAULT_TRACKER_DATA,
+              lastDate: today,
+              dailyOnMinutes: todayHistoryRecord.pure_deep_work_minutes || 0,
+            };
+          }
         } else {
-          setData(cloudData);
+          // Αν είναι η ίδια μέρα, κρατάμε τα cloud data, αλλά αν τα dailyOnMinutes είναι 0 και υπάρχει ιστορικό για σήμερα, παίρνουμε τις τιμές του ιστορικού
+          initialData = cloudData;
+          if (initialData.dailyOnMinutes === 0 && todayHistoryRecord) {
+            initialData.dailyOnMinutes = todayHistoryRecord.pure_deep_work_minutes || 0;
+          }
         }
+      } else if (todayHistoryRecord) {
+        // Αν δεν υπήρχε productivity_log αλλά υπάρχει ιστορικό για σήμερα
+        initialData.dailyOnMinutes = todayHistoryRecord.pure_deep_work_minutes || 0;
       }
 
-      await loadHistory();
+      setData(initialData);
+      await supabase.from("productivity_logs").upsert({ id: 1, data: initialData });
       setIsLoaded(true);
     };
 
     loadDataFromCloud();
   }, []);
 
-  // 2. Αποθήκευση τρέχουσας συνεδρίας στο Supabase
+  // 2. Αποθήκευση στο Supabase σε κάθε αλλαγή
   useEffect(() => {
     if (mounted && isLoaded) {
       const saveDataToCloud = async () => {
@@ -124,7 +182,7 @@ export default function Home() {
 
   // 3. Χρονόμετρο countdown 2 λεπτών
   useEffect(() => {
-    if (!mounted || !isLoaded || !isActive || showPrompt) return;
+    if (!mounted || !isLoaded || !data.isSessionActive || showPrompt) return;
 
     const timer = setInterval(() => {
       setTimeLeft((prev) => {
@@ -139,9 +197,9 @@ export default function Home() {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [mounted, isLoaded, isActive, showPrompt]);
+  }, [mounted, isLoaded, data.isSessionActive, showPrompt]);
 
-  // 4. Χρονόμετρο 10 δευτερολέπτων για Αυτόματο Check-in (Default: ON)
+  // 4. Χρονόμετρο 10 δευτερολέπτων για Αυτόματο Check-in
   useEffect(() => {
     if (!showPrompt) return;
 
@@ -201,21 +259,39 @@ export default function Home() {
     const catToUse = selectedCategoryRef.current;
 
     setData((prev) => {
+      const currentSess = prev.currentSession || DEFAULT_TRACKER_DATA.currentSession;
       const updated = { ...prev };
+
       if (isOff) {
-        updated.offMinutes += intervalMins;
+        updated.dailyOffMinutes += intervalMins;
+        updated.dailyOffCategories = {
+          ...updated.dailyOffCategories,
+          [catToUse]: (updated.dailyOffCategories[catToUse] || 0) + intervalMins,
+        };
+        updated.currentSession = {
+          ...currentSess,
+          offMinutes: currentSess.offMinutes + intervalMins,
+          offCategories: {
+            ...currentSess.offCategories,
+            [catToUse]: (currentSess.offCategories[catToUse] || 0) + intervalMins,
+          },
+        };
         updated.currentOffStreak += intervalMins;
-        updated.offCategories = {
-          ...updated.offCategories,
-          [catToUse]: (updated.offCategories[catToUse] || 0) + intervalMins,
-        };
       } else {
-        updated.onMinutes += intervalMins;
-        updated.currentOffStreak = 0;
-        updated.onCategories = {
-          ...updated.onCategories,
-          [catToUse]: (updated.onCategories[catToUse] || 0) + intervalMins,
+        updated.dailyOnMinutes += intervalMins;
+        updated.dailyOnCategories = {
+          ...updated.dailyOnCategories,
+          [catToUse]: (updated.dailyOnCategories[catToUse] || 0) + intervalMins,
         };
+        updated.currentSession = {
+          ...currentSess,
+          onMinutes: currentSess.onMinutes + intervalMins,
+          onCategories: {
+            ...currentSess.onCategories,
+            [catToUse]: (currentSess.onCategories[catToUse] || 0) + intervalMins,
+          },
+        };
+        updated.currentOffStreak = 0;
       }
       return updated;
     });
@@ -224,11 +300,39 @@ export default function Home() {
     setTimeLeft(CHECK_INTERVAL_SEC);
   };
 
-  // Αποθήκευση Συνεδρίας στο Ιστορικό
-  const saveSessionToHistory = async (sessionData: TrackerData, sessionDate: string) => {
-    const pureMins = sessionData.onMinutes;
-    const totalMins = sessionData.onMinutes + sessionData.offMinutes;
-    const score = totalMins > 0 ? Number(((sessionData.onMinutes / totalMins) * 100).toFixed(1)) : 100;
+  const handleStartSession = () => {
+    setData((prev) => ({
+      ...prev,
+      isSessionActive: true,
+      currentSession: {
+        onMinutes: 0,
+        offMinutes: 0,
+        onCategories: {},
+        offCategories: {},
+      },
+    }));
+    setTimeLeft(CHECK_INTERVAL_SEC);
+  };
+
+  const handlePauseSession = () => {
+    setData((prev) => ({
+      ...prev,
+      isSessionActive: false,
+    }));
+  };
+
+  const handleEndSession = () => {
+    setData((prev) => ({
+      ...prev,
+      isSessionActive: false,
+    }));
+    setShowPrompt(false);
+  };
+
+  const saveDayToHistory = async (sessionData: TrackerData, sessionDate: string) => {
+    const pureMins = sessionData.dailyOnMinutes || 0;
+    const totalMins = pureMins + (sessionData.dailyOffMinutes || 0);
+    const score = totalMins > 0 ? Number(((pureMins / totalMins) * 100).toFixed(1)) : 100;
     const isGoalAchieved = pureMins >= GOAL_MINUTES;
 
     await supabase.from("daily_history").upsert({
@@ -241,38 +345,35 @@ export default function Home() {
     await loadHistory();
   };
 
-  // Κουμπί Χειροκίνητου Τέλους Ημέρας / Reset
   const handleEndDay = async () => {
-    if (!confirm("Είσαι σίγουρος ότι θέλεις να τερματίσεις τη σημερινή συνεδρία και να την αποθηκεύσεις στο ιστορικό;")) {
+    if (!confirm("Είσαι σίγουρος ότι θέλεις να τερματίσεις ολόκληρη τη σημερινή ημέρα και να την αποθηκεύσεις στο ιστορικό;")) {
       return;
     }
 
     const today = new Date().toISOString().split("T")[0];
-    await saveSessionToHistory(data, today);
+    await saveDayToHistory(data, today);
 
     const freshData: TrackerData = {
+      ...DEFAULT_TRACKER_DATA,
       lastDate: today,
-      onMinutes: 0,
-      offMinutes: 0,
-      currentOffStreak: 0,
-      onCategories: {},
-      offCategories: {},
     };
 
     setData(freshData);
     await supabase.from("productivity_logs").upsert({ id: 1, data: freshData });
-    alert("Η συνεδρία αποθηκεύτηκε στο ιστορικό! Νέα ημέρα ξεκίνησε.");
+    alert("Η σημερινή ημέρα αποθηκεύτηκε στο ιστορικό!");
   };
 
   // --- ΥΠΟΛΟΓΙΣΜΟΙ ΔΕΔΟΜΕΝΩΝ & ΣΤΟΧΟΥ ---
 
-  const pureDeepWorkMinutes = data.onMinutes;
+  const pureDeepWorkMinutes = data.dailyOnMinutes || 0;
   const remainingGoalMinutes = Math.max(0, GOAL_MINUTES - pureDeepWorkMinutes);
   const goalProgressPct = Math.min(100, (pureDeepWorkMinutes / GOAL_MINUTES) * 100);
 
-  const totalMinutes = data.onMinutes + data.offMinutes;
-  const productivityScore =
-    totalMinutes > 0 ? ((data.onMinutes / totalMinutes) * 100).toFixed(1) : "100.0";
+  const totalDailyMinutes = pureDeepWorkMinutes + (data.dailyOffMinutes || 0);
+  const dailyProductivityScore =
+    totalDailyMinutes > 0 ? ((pureDeepWorkMinutes / totalDailyMinutes) * 100).toFixed(1) : "100.0";
+
+  const currentSessionOnMins = data.currentSession?.onMinutes || 0;
 
   const formatMins = (mins: number) => {
     const h = Math.floor(mins / 60);
@@ -311,14 +412,31 @@ export default function Home() {
             >
               🔔 Ειδοποιήσεις
             </button>
-            <button
-              onClick={() => setIsActive(!isActive)}
-              className={`text-xs px-4 py-1.5 font-bold rounded transition ${
-                isActive ? "bg-amber-600 hover:bg-amber-700" : "bg-emerald-600 hover:bg-emerald-700"
-              }`}
-            >
-              {isActive ? "Παύση" : "Έναρξη"}
-            </button>
+            
+            {!data.isSessionActive ? (
+              <button
+                onClick={handleStartSession}
+                className="text-xs px-4 py-1.5 font-bold rounded bg-emerald-600 hover:bg-emerald-500 text-white transition shadow-lg"
+              >
+                ▶️ Έναρξη Συνεδρίας
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={handlePauseSession}
+                  className="text-xs px-3 py-1.5 font-bold rounded bg-amber-600 hover:bg-amber-500 text-white transition"
+                >
+                  ⏸️ Παύση
+                </button>
+                <button
+                  onClick={handleEndSession}
+                  className="text-xs px-3 py-1.5 font-bold rounded bg-slate-700 hover:bg-slate-600 text-slate-200 transition"
+                >
+                  ⏹️ Τέλος Συνεδρίας
+                </button>
+              </>
+            )}
+
             <button
               onClick={handleEndDay}
               className="text-xs px-3 py-1.5 bg-rose-900/60 hover:bg-rose-800 text-rose-200 border border-rose-700 font-bold rounded transition"
@@ -333,7 +451,7 @@ export default function Home() {
           <div className="flex justify-between items-center">
             <div>
               <span className="text-xs font-semibold uppercase tracking-wider text-indigo-400">
-                🎯 Ημερήσιος Στόχος Deep Work (5 ώρες)
+                🎯 Συνολικός Ημερήσιος Στόχος Deep Work (5 ώρες)
               </span>
               <div className="text-2xl font-extrabold text-white mt-1">
                 {formatMins(pureDeepWorkMinutes)} <span className="text-sm font-normal text-slate-400">/ 5ώ 0λ</span>
@@ -353,7 +471,6 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Progress Bar */}
           <div className="w-full bg-slate-800 h-3 rounded-full overflow-hidden border border-slate-700/50">
             <div
               className="bg-gradient-to-r from-indigo-500 to-emerald-400 h-full transition-all duration-500"
@@ -363,7 +480,7 @@ export default function Home() {
         </div>
 
         {/* Check-in Modal Card */}
-        {showPrompt && (
+        {showPrompt && data.isSessionActive && (
           <div className="bg-slate-900 border-2 border-amber-500/80 p-6 rounded-xl shadow-2xl space-y-4 animate-pulse">
             <div className="flex justify-between items-center">
               <h2 className="text-xl font-bold text-amber-400">⚠️ Έλεγχος Παραγωγικότητας!</h2>
@@ -413,27 +530,29 @@ export default function Home() {
           </div>
         )}
 
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl text-center">
-            <span className="text-xs text-slate-400 font-semibold uppercase">Productivity Score</span>
-            <div className="text-4xl font-extrabold text-indigo-400 my-2">{productivityScore}%</div>
-            {data.currentOffStreak > 0 && (
-              <span className="inline-block bg-rose-950 text-rose-300 text-xs px-2.5 py-1 rounded-full border border-rose-800 font-semibold">
-                🔥 Streak Χαζέματος: {data.currentOffStreak}λ
-              </span>
-            )}
+        {/* Current Session vs Daily Stats Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl text-center">
+            <span className="text-xs text-slate-400 font-semibold uppercase">Ημερήσιο Score</span>
+            <div className="text-3xl font-extrabold text-indigo-400 my-1">{dailyProductivityScore}%</div>
+            <span className="text-xs text-slate-500">Σύνολο Ημέρας</span>
           </div>
 
-          <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl text-center">
-            <span className="text-xs text-slate-400 font-semibold uppercase">Χρόνος ON</span>
-            <div className="text-3xl font-bold text-emerald-400 my-2">{formatMins(data.onMinutes)}</div>
-            <span className="text-xs text-slate-500">Καθαρός Χρόνος Εστίασης</span>
+          <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl text-center">
+            <span className="text-xs text-slate-400 font-semibold uppercase">Συνολικό ON Ημέρας</span>
+            <div className="text-3xl font-bold text-emerald-400 my-1">{formatMins(data.dailyOnMinutes || 0)}</div>
+            <span className="text-xs text-slate-500">Όλες οι Συνεδρίες</span>
           </div>
 
-          <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl text-center">
-            <span className="text-xs text-slate-400 font-semibold uppercase">Χρόνος OFF</span>
-            <div className="text-3xl font-bold text-rose-400 my-2">{formatMins(data.offMinutes)}</div>
+          <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl text-center">
+            <span className="text-xs text-slate-400 font-semibold uppercase">Τρέχουσα Συνεδρία ON</span>
+            <div className="text-3xl font-bold text-emerald-300 my-1">{formatMins(currentSessionOnMins)}</div>
+            <span className="text-xs text-slate-500">Ενεργή συνεδρία</span>
+          </div>
+
+          <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl text-center">
+            <span className="text-xs text-slate-400 font-semibold uppercase">Συνολικό OFF Ημέρας</span>
+            <div className="text-3xl font-bold text-rose-400 my-1">{formatMins(data.dailyOffMinutes || 0)}</div>
             <span className="text-xs text-slate-500">Εκτός προγράμματος</span>
           </div>
         </div>
@@ -441,13 +560,19 @@ export default function Home() {
         {/* Countdown Bar */}
         <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-2">
           <div className="flex justify-between text-xs text-slate-400">
-            <span>Επόμενος έλεγχος σε:</span>
-            <span className="font-mono font-bold text-indigo-400">{formatTimer(timeLeft)}</span>
+            <span>
+              {data.isSessionActive ? "Επόμενος έλεγχος σε:" : "Η συνεδρία είναι σε παύση/αδράνεια."}
+            </span>
+            {data.isSessionActive && (
+              <span className="font-mono font-bold text-indigo-400">{formatTimer(timeLeft)}</span>
+            )}
           </div>
           <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
             <div
-              className="bg-indigo-500 h-full transition-all duration-1000"
-              style={{ width: `${(timeLeft / CHECK_INTERVAL_SEC) * 100}%` }}
+              className={`h-full transition-all duration-1000 ${
+                data.isSessionActive ? "bg-indigo-500" : "bg-slate-700"
+              }`}
+              style={{ width: data.isSessionActive ? `${(timeLeft / CHECK_INTERVAL_SEC) * 100}%` : "0%" }}
             ></div>
           </div>
         </div>
@@ -456,13 +581,13 @@ export default function Home() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-3">
             <h3 className="text-sm font-semibold text-emerald-400 border-b border-slate-800 pb-2">
-              ✅ Αναλυτικός χρόνος ON
+              ✅ Ημερήσιο Αναλυτικό ON
             </h3>
             <ul className="space-y-2 text-sm">
-              {Object.entries(data.onCategories).length === 0 ? (
+              {!data.dailyOnCategories || Object.entries(data.dailyOnCategories).length === 0 ? (
                 <li className="text-slate-500 text-xs italic">Καμία καταγραφή ακόμα ⏱️</li>
               ) : (
-                Object.entries(data.onCategories).map(([cat, mins]) => (
+                Object.entries(data.dailyOnCategories).map(([cat, mins]) => (
                   <li key={cat} className="flex justify-between text-slate-300 border-b border-slate-800/50 pb-1">
                     <span>{cat}</span>
                     <span className="font-mono font-bold text-emerald-400">{formatMins(mins)}</span>
@@ -474,13 +599,13 @@ export default function Home() {
 
           <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-3">
             <h3 className="text-sm font-semibold text-rose-400 border-b border-slate-800 pb-2">
-              ❌ Αναλυτικός χρόνος OFF
+              ❌ Ημερήσιο Αναλυτικό OFF
             </h3>
             <ul className="space-y-2 text-sm">
-              {Object.entries(data.offCategories).length === 0 ? (
+              {!data.dailyOffCategories || Object.entries(data.dailyOffCategories).length === 0 ? (
                 <li className="text-slate-500 text-xs italic">Καμία καταγραφή ακόμα 👍</li>
               ) : (
-                Object.entries(data.offCategories).map(([cat, mins]) => (
+                Object.entries(data.dailyOffCategories).map(([cat, mins]) => (
                   <li key={cat} className="flex justify-between text-slate-300 border-b border-slate-800/50 pb-1">
                     <span>{cat}</span>
                     <span className="font-mono font-bold text-rose-400">{formatMins(mins)}</span>
@@ -508,7 +633,8 @@ export default function Home() {
                     <th className="p-2.5 rounded-l">Ημερομηνία</th>
                     <th className="p-2.5">Deep Work</th>
                     <th className="p-2.5">Score</th>
-                    <th className="p-2.5 rounded-r">Στόχος (5ώ)</th>
+                    <th className="p-2.5">Στόχος (5ώ)</th>
+                    <th className="p-2.5 text-right rounded-r">Ενέργειες</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/50">
@@ -527,6 +653,15 @@ export default function Home() {
                             ❌ Εκτός στόχου
                           </span>
                         )}
+                      </td>
+                      <td className="p-2.5 text-right">
+                        <button
+                          onClick={() => handleDeleteHistory(rec.id)}
+                          className="px-2 py-1 bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-800 rounded transition"
+                          title="Διαγραφή εγγραφής"
+                        >
+                          🗑️
+                        </button>
                       </td>
                     </tr>
                   ))}
