@@ -196,9 +196,13 @@ export default function Home() {
 
   // --- ΥΠΟΛΟΓΙΣΜΟΙ ΔΕΔΟΜΕΝΩΝ & ΣΤΟΧΟΥ ---
 
-  const sleepMinutes = data.onCategories["Βραδινός Ύπνος"] || 0;
-  const breakMinutes = data.onCategories["Χρόνος εκτός PC (Διάλειμμα)"] || 0;
-  const pureDeepWorkMinutes = Math.max(0, data.onMinutes - sleepMinutes - breakMinutes);
+// Καθαρός χρόνος Deep Work (Άθροισμα όλων των κατηγοριών ON εκτός από Ύπνο & Διαλείμματα)
+  const EXCLUDED_CATEGORIES = ["Βραδινός Ύπνος", "Χρόνος εκτός PC (Διάλειμμα)"];
+  
+  const pureDeepWorkMinutes = Object.entries(data.onCategories).reduce(
+    (acc, [cat, mins]) => (EXCLUDED_CATEGORIES.includes(cat) ? acc : acc + mins),
+    0
+  );
 
   const remainingGoalMinutes = Math.max(0, GOAL_MINUTES - pureDeepWorkMinutes);
   const goalProgressPct = Math.min(100, (pureDeepWorkMinutes / GOAL_MINUTES) * 100);
