@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 
 interface CategoryMap {
@@ -17,6 +17,7 @@ interface TrackerData {
 
 const CHECK_INTERVAL_SEC = 120; // 2 λεπτά
 const GOAL_MINUTES = 300; // Στόχος 5 ώρες Deep Work (5 * 60 = 300 λεπτά)
+const AUTO_CHECKIN_SEC = 10; // 10 δευτερόλεπτα διορία για απάντηση
 
 export default function Home() {
   const [data, setData] = useState<TrackerData>({
@@ -32,7 +33,14 @@ export default function Home() {
   const [isActive, setIsActive] = useState<boolean>(true);
   const [timeLeft, setTimeLeft] = useState<number>(CHECK_INTERVAL_SEC);
   const [showPrompt, setShowPrompt] = useState<boolean>(false);
+  const [autoTimeoutLeft, setAutoTimeoutLeft] = useState<number>(AUTO_CHECKIN_SEC);
   const [selectedCategory, setSelectedCategory] = useState<string>("VS Code / Προγραμματισμός");
+
+  // Ref για πρόσβαση στην τρέχουσα επιλεγμένη κατηγορία μέσα στο timer
+  const selectedCategoryRef = useRef(selectedCategory);
+  useEffect(() => {
+    selectedCategoryRef.current = selectedCategory;
+  }, [selectedCategory]);
 
   // 1. Φόρτωση δεδομένων από το Supabase
   useEffect(() => {
@@ -90,6 +98,7 @@ export default function Home() {
       setTimeLeft((prev) => {
         if (prev <= 1) {
           setShowPrompt(true);
+          setAutoTimeoutLeft(AUTO_CHECKIN_SEC);
           triggerNotification();
           return CHECK_INTERVAL_SEC;
         }
@@ -99,6 +108,24 @@ export default function Home() {
 
     return () => clearInterval(timer);
   }, [mounted, isLoaded, isActive, showPrompt]);
+
+  // 4. Χρονόμετρο 10 δευτερολέπτων για Αυτόματο Check-in (Default: ON)
+  useEffect(() => {
+    if (!showPrompt) return;
+
+    const autoTimer = setInterval(() => {
+      setAutoTimeoutLeft((prev) => {
+        if (prev <= 1) {
+          // Αν περάσουν 10 δευτερόλεπτα χωρίς απάντηση -> Αυτόματο ON
+          handleCheckin(false);
+          return AUTO_CHECKIN_SEC;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(autoTimer);
+  }, [showPrompt]);
 
   // Browser Notification
   const triggerNotification = () => {
@@ -121,7 +148,7 @@ export default function Home() {
     if (typeof window !== "undefined" && "Notification" in window) {
       if (Notification.permission === "granted") {
         const notif = new Notification("🧠 Deep Work Check-in", {
-          body: "Πέρασαν 2 λεπτά! Κάνε κλικ εδώ για να απαντήσεις.",
+          body: "Πέρασαν 2 λεπτά! (Αυτόματο ON σε 10 δευτερόλεπτα)",
           requireInteraction: true,
         });
 
@@ -141,6 +168,7 @@ export default function Home() {
 
   const handleCheckin = (isOff: boolean) => {
     const intervalMins = CHECK_INTERVAL_SEC / 60;
+    const catToUse = selectedCategoryRef.current;
 
     setData((prev) => {
       const updated = { ...prev };
@@ -149,14 +177,14 @@ export default function Home() {
         updated.currentOffStreak += intervalMins;
         updated.offCategories = {
           ...updated.offCategories,
-          [selectedCategory]: (updated.offCategories[selectedCategory] || 0) + intervalMins,
+          [catToUse]: (updated.offCategories[catToUse] || 0) + intervalMins,
         };
       } else {
         updated.onMinutes += intervalMins;
         updated.currentOffStreak = 0;
         updated.onCategories = {
           ...updated.onCategories,
-          [selectedCategory]: (updated.onCategories[selectedCategory] || 0) + intervalMins,
+          [catToUse]: (updated.onCategories[catToUse] || 0) + intervalMins,
         };
       }
       return updated;
@@ -168,12 +196,10 @@ export default function Home() {
 
   // --- ΥΠΟΛΟΓΙΣΜΟΙ ΔΕΔΟΜΕΝΩΝ & ΣΤΟΧΟΥ ---
 
-  // Καθαρός χρόνος Deep Work (αφαιρούμε Ύπνο και Διαλείμματα εκτός PC)
   const sleepMinutes = data.onCategories["Βραδινός Ύπνος"] || 0;
   const breakMinutes = data.onCategories["Χρόνος εκτός PC (Διάλειμμα)"] || 0;
   const pureDeepWorkMinutes = Math.max(0, data.onMinutes - sleepMinutes - breakMinutes);
 
-  // Υπόλοιπο για τον στόχο των 5 ωρών
   const remainingGoalMinutes = Math.max(0, GOAL_MINUTES - pureDeepWorkMinutes);
   const goalProgressPct = Math.min(100, (pureDeepWorkMinutes / GOAL_MINUTES) * 100);
 
@@ -266,7 +292,12 @@ export default function Home() {
         {/* Check-in Modal Card */}
         {showPrompt && (
           <div className="bg-slate-900 border-2 border-amber-500/80 p-6 rounded-xl shadow-2xl space-y-4 animate-pulse">
-            <h2 className="text-xl font-bold text-amber-400">⚠️ Έλεγχος Παραγωγικότητας!</h2>
+            <div className="flex justify-between items-center">
+              <h2 className="text-xl font-bold text-amber-400">⚠️ Έλεγχος Παραγωγικότητας!</h2>
+              <span className="text-xs px-2.5 py-1 bg-amber-500/20 border border-amber-500/40 text-amber-300 font-mono font-bold rounded-full">
+                ⏱️ Αυτόματο ON σε {autoTimeoutLeft}s
+              </span>
+            </div>
             <p className="text-sm text-slate-300">
               Πού ξόδεψες τα τελευταία 2 λεπτά;
             </p>
