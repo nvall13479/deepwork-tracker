@@ -25,31 +25,35 @@ export default function Home() {
     offCategories: {},
   });
 
+  const [mounted, setMounted] = useState<boolean>(false);
   const [isActive, setIsActive] = useState<boolean>(true);
   const [timeLeft, setTimeLeft] = useState<number>(CHECK_INTERVAL_SEC);
   const [showPrompt, setShowPrompt] = useState<boolean>(false);
   const [selectedCategory, setSelectedCategory] = useState<string>("VS Code / Προγραμματισμός");
 
-  // Φόρτωση δεδομένων από το localStorage
+  // 1. Φόρτωση δεδομένων από το localStorage ΜΟΝΟ στον client (αποφυγή Hydration Error)
   useEffect(() => {
+    setMounted(true);
     const saved = localStorage.getItem("deepwork_data");
     if (saved) {
       try {
         setData(JSON.parse(saved));
       } catch (e) {
-        console.error("Error loading data", e);
+        console.error("Error loading data from localStorage", e);
       }
     }
   }, []);
 
-  // Αποθήκευση στο localStorage σε κάθε αλλαγή
+  // 2. Αποθήκευση στο localStorage ΜΟΝΟ αφού έχει γίνει mount
   useEffect(() => {
-    localStorage.setItem("deepwork_data", JSON.stringify(data));
-  }, [data]);
+    if (mounted) {
+      localStorage.setItem("deepwork_data", JSON.stringify(data));
+    }
+  }, [data, mounted]);
 
-  // Χρονόμετρο countdown 2 λεπτών
+  // 3. Χρονόμετρο countdown 2 λεπτών
   useEffect(() => {
-    if (!isActive || showPrompt) return;
+    if (!mounted || !isActive || showPrompt) return;
 
     const timer = setInterval(() => {
       setTimeLeft((prev) => {
@@ -63,19 +67,43 @@ export default function Home() {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [isActive, showPrompt]);
+  }, [mounted, isActive, showPrompt]);
 
   // Browser Notification
+// Βελτιωμένη Browser Notification με Ήχο και Focus στο Click
   const triggerNotification = () => {
+    // 1. Αναπαραγωγή ήχου ειδοποίησης (Beep)
+    try {
+      const audioCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5 tone
+      gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.3);
+    } catch (e) {
+      console.error("Audio error", e);
+    }
+
+    // 2. Εμφάνιση Ειδοποίησης
     if (typeof window !== "undefined" && "Notification" in window) {
       if (Notification.permission === "granted") {
-        new Notification("🧠 Deep Work Check-in", {
-          body: "Πέρασαν 2 λεπτά! Είσαι focus ή χαζεύεις;",
+        const notif = new Notification("🧠 Deep Work Check-in", {
+          body: "Πέρασαν 2 λεπτά! Κάνε κλικ εδώ για να απαντήσεις.",
+          requireInteraction: true, // Κρατάει την ειδοποίηση ανοιχτή στην οθόνη μέχρι να την πατήσεις!
         });
+
+        // Όταν κάνεις κλικ πάνω στην ειδοποίηση, σε φέρνει στο Tab του Tracker
+        notif.onclick = () => {
+          window.focus();
+          notif.close();
+        };
       }
     }
   };
-
   const requestNotificationPermission = () => {
     if (typeof window !== "undefined" && "Notification" in window) {
       Notification.requestPermission();
@@ -126,6 +154,15 @@ export default function Home() {
     return `${m}:${s}`;
   };
 
+  // Αν η εφαρμογή δεν έχει φορτώσει ακόμα στον client, δείξε loading για αποφυγή flicker/hydration bug
+  if (!mounted) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center font-sans">
+        <div className="text-sm text-slate-400 animate-pulse">Φόρτωση Deep Work Tracker...</div>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100 p-6 font-sans">
       <div className="max-w-4xl mx-auto space-y-6">
@@ -139,13 +176,13 @@ export default function Home() {
           <div className="flex gap-2">
             <button
               onClick={requestNotificationPermission}
-              className="text-xs px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded border border-slate-700"
+              className="text-xs px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded border border-slate-700 transition"
             >
               🔔 Ειδοποιήσεις
             </button>
             <button
               onClick={() => setIsActive(!isActive)}
-              className={`text-xs px-4 py-1.5 font-bold rounded ${
+              className={`text-xs px-4 py-1.5 font-bold rounded transition ${
                 isActive ? "bg-amber-600 hover:bg-amber-700" : "bg-emerald-600 hover:bg-emerald-700"
               }`}
             >
@@ -167,7 +204,7 @@ export default function Home() {
               <select
                 value={selectedCategory}
                 onChange={(e) => setSelectedCategory(e.target.value)}
-                className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-sm text-slate-200"
+                className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
               >
                 <option value="VS Code / Προγραμματισμός">VS Code / Προγραμματισμός</option>
                 <option value="Browsing / Έρευνα">Browsing / Έρευνα</option>
@@ -181,13 +218,13 @@ export default function Home() {
             <div className="grid grid-cols-2 gap-4 pt-2">
               <button
                 onClick={() => handleCheckin(false)}
-                className="bg-emerald-600 hover:bg-emerald-500 font-bold py-3 rounded-lg text-white"
+                className="bg-emerald-600 hover:bg-emerald-500 font-bold py-3 rounded-lg text-white transition"
               >
                 ✅ ON Schedule (Deep Work)
               </button>
               <button
                 onClick={() => handleCheckin(true)}
-                className="bg-rose-600 hover:bg-rose-500 font-bold py-3 rounded-lg text-white"
+                className="bg-rose-600 hover:bg-rose-500 font-bold py-3 rounded-lg text-white transition"
               >
                 ❌ OFF Schedule (Χάζεμα)
                 {data.currentOffStreak > 0 && (
