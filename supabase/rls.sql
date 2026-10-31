@@ -12,7 +12,8 @@ alter table public.daily_history add column if not exists user_id uuid;
 create unique index if not exists productivity_logs_user_key
   on public.productivity_logs (user_id);
 
--- το global date unique (Επιλογή A) αντικαθίσταται από ανά-χρήστη μοναδικότητα
+-- το global date UNIQUE CONSTRAINT αντικαθίσταται από ανά-χρήστη μοναδικότητα
+alter table public.daily_history drop constraint if exists daily_history_date_key;
 drop index if exists public.daily_history_date_key;
 create unique index if not exists daily_history_user_date_key
   on public.daily_history (user_id, date);
