@@ -6,6 +6,12 @@
 
 ## 2026-10-31 — Session 2
 
+### 10:24–10:31 — Workflow scope + ενεργοποίηση CI
+- Chrome (flatpak) ορίστηκε default browser ώστε το device-flow του `gh auth refresh` να ανοίγει σωστά.
+- `gh auth refresh -s workflow` ολοκληρώθηκε — scopes τώρα: gist, read:org, repo, **workflow**.
+- `ci/ci.yml` → `.github/workflows/ci.yml`, push `7bb147b`.
+- Πρώτο CI run (push στο main): **completed / success** ✓ (lint+typecheck+test+build στη GitHub infra).
+
 ### 10:15–10:20 — Code review (`/review uncommitted`) + fixes
 - 6-track review (6 sub-agents): 8 ευρήματα (2 CRITICAL data-loss διαδρομές, 3 WARNING, 3 SUGGESTION)· 3 ψευδώς-θετικά απορρίφθηκαν μετά από επανέλεγχο.
 - **Fixes:** `loadOk` gate στο save effect (κλείνει το overwrite-Cloud-με-μηδενικά σε read error)· `persistDay→boolean` + abort rollover/End-Day σε αποτυχημένη αρχειοθέτηση με cooldown 15s & retry banner· `closePrompt()` πριν re-anchor σε όλα τα rollover paths· `secondaryTab` guard σε όλα τα handlers (6)· αφαίρεση διπλού upsert στο load· `HISTORY_COLUMNS` ενιαίο· cap στο null-`lastCheckAt`· διαγραφή `emptySession()`· `migrateData` via `defaultSession()`.
