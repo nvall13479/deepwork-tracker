@@ -10,6 +10,8 @@
 - 6-track review (6 sub-agents): 8 ευρήματα (2 CRITICAL data-loss διαδρομές, 3 WARNING, 3 SUGGESTION)· 3 ψευδώς-θετικά απορρίφθηκαν μετά από επανέλεγχο.
 - **Fixes:** `loadOk` gate στο save effect (κλείνει το overwrite-Cloud-με-μηδενικά σε read error)· `persistDay→boolean` + abort rollover/End-Day σε αποτυχημένη αρχειοθέτηση με cooldown 15s & retry banner· `closePrompt()` πριν re-anchor σε όλα τα rollover paths· `secondaryTab` guard σε όλα τα handlers (6)· αφαίρεση διπλού upsert στο load· `HISTORY_COLUMNS` ενιαίο· cap στο null-`lastCheckAt`· διαγραφή `emptySession()`· `migrateData` via `defaultSession()`.
 - **Verification:** test 19/19 ✓, lint 0 ✓, typecheck ✓, build ✓.
+- **Commit & push:** `66e1464` στο `origin/main` (37 αρχεία, +4068/−1120).
+- **Ρύθμιση CI:** το initial push απορρίφθηκε — το OAuth token του gh δεν έχει `workflow` scope. Το workflow μεταφέρθηκε προσωρινά στο `ci/ci.yml`. Επαναφορά: `gh auth refresh-scope workflow` → `mkdir -p .github/workflows && git mv ci/ci.yml .github/workflows/ci.yml && git commit -m "enable CI" && git push`.
 
 ### 09:24–09:42 — Υλοποίηση improvements (Phases 1–4 + μέρος 5)
 - **Νέα αρχιτεκτονική:** `src/lib/` (types με v2 migration, dates, tracker pure logic, guarded supabase client, tabs/Web Locks, notify, localCache, format) + 12 components (`src/components/`) — `app/page.tsx` 677→~520 γραμμές.
