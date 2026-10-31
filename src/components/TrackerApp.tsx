@@ -208,7 +208,7 @@ export default function TrackerApp({ serverUser }: { serverUser: User | null }) 
             .from("productivity_logs")
             .select("data")
             .is("user_id", null)
-            .limit(1)
+            .eq("id", 1)
             .maybeSingle();
           if (legacyBlob) {
             const { error: claimErr } = await supabase

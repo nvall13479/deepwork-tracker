@@ -6,7 +6,14 @@
 
 ## 2026-10-31 — Session 2
 
-### 10:40–10:56 — Επιλογή B: Supabase Auth + ανά-χρήστη δεδομένα
+### 13:00–13:10 — Εφαρμογή RLS-B στη βάση & επαλήθευση
+- Η ενεργοποίηση πέρασε αλλά ανακαλύφθηκε (μέσω διαγνωστικών queries): ο wizard του dashboard είχε δημιουργήσει **`Allow public all` / `Allow public all history`** PERMISSIVE policies που ακύρωναν το RLS + οι δικές μας policies έμειναν χωρίς ρόλο (`*`).
+- Το τελικό fix script (drop + recreate `to authenticated`) εκτελέστηκε με επιτυχία: ανώνυμο read = `[]`, ανώνυμο insert = **401 42501** — RLS B σε ισχύ ✓
+- Παράπλευρο: δοκιμαστικό μου row (`user_id null`) — ο κώδικας claim τώρα στοχεύει ρητά το αυθεντικό legacy row `id=1` και το `delete .is('user_id', null)` το καθαρίζει στην πρώτη είσοδο.
+- Επαλήθευση εκ νέου: lint 0 ✓ tests 19/19 ✓ build ✓.
+- **Επόμενο (χρήστης):** Redirect URL `http://localhost:3001/auth/callback` (Authentication → URL Configuration) → signup στο app → επιβεβαίωση claim.
+
+
 - **Νέα δομή:** `app/page.tsx` = server wrapper (`getUser()` από cookies) → `src/components/TrackerApp.tsx` (πρώην client page)· `src/lib/supabase.ts` (client solo σε browser + cookie-sync adapter γράφει `dw_access`/`dw_refresh`)· `src/lib/supabase-server.ts` (`getServerUser`+`cache`)· `app/auth/callback/route.ts` (`exchangeCodeForSession`)· `app/actions.ts` (server `signOut`)· `src/hooks/useAuth.ts`· `LoginScreen` (email+password, signup/login).
 - **Data model:** queries/upserts ανά `user_id` (`onConflict:"user_id"` / `"user_id,date"`)· **εφάπαξ claim** legacy (user_id null) blob + daily_history στον πρώτο συνδεδεμένο χρήστη· logout με confirm· `supabase/rls.sql` αντικαταστάθηκε με πλήρη B (unique `(user_id,date)`, own+legacy-claim policies, drop global id=1 PK).
 - **Verification:** typecheck ✓, lint 0 ✓, tests 19/19 ✓, build ✓ — routes `ƒ /` + `ƒ /auth/callback` (dynamic, αναμενόμενο λόγω cookies).
