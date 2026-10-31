@@ -6,7 +6,14 @@
 
 ## 2026-10-31 — Session 2
 
-### 13:00–13:10 — Εφαρμογή RLS-B στη βάση & επαλήθευση
+### 13:15–13:24 — Email callback: PKCE fix + hydration
+- O server-side `exchangeCodeForSession` στο route απέτυχε (ο κωδικός PKCE `code_verifier` μένει στο browser → `/?auth_error=1`).
+- Μετατροπή `/auth/callback` από route σε **client page**: το exchange γίνεται από τον browser client (βλ. `app/auth/callback/page.tsx`), με spinner/apology states και `router.replace("/")`+`refresh()`.
+- Hydration fix στο `LoginScreen` (το `authError` διαβάζεται πλέον σε effect με `setTimeout(0)`, όχι στην render)· `setFailed` μέσω `queueMicrotask` για React 19 purity.
+- Verification: lint 0 ✓, typecheck ✓, tests 19/19 ✓, build ✓ (`ƒ /`, `○ /auth/callback`).
+- Server ξανασηκωμένος στο :3001 (η προηγούμενη συνεδρία τον είχε τερματίσει).
+
+
 - Η ενεργοποίηση πέρασε αλλά ανακαλύφθηκε (μέσω διαγνωστικών queries): ο wizard του dashboard είχε δημιουργήσει **`Allow public all` / `Allow public all history`** PERMISSIVE policies που ακύρωναν το RLS + οι δικές μας policies έμειναν χωρίς ρόλο (`*`).
 - Το τελικό fix script (drop + recreate `to authenticated`) εκτελέστηκε με επιτυχία: ανώνυμο read = `[]`, ανώνυμο insert = **401 42501** — RLS B σε ισχύ ✓
 - Παράπλευρο: δοκιμαστικό μου row (`user_id null`) — ο κώδικας claim τώρα στοχεύει ρητά το αυθεντικό legacy row `id=1` και το `delete .is('user_id', null)` το καθαρίζει στην πρώτη είσοδο.

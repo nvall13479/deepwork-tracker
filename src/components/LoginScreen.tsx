@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 
@@ -11,10 +11,14 @@ export default function LoginScreen() {
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
+  const [authError, setAuthError] = useState(false);
 
-  const authError =
-    typeof window !== "undefined" &&
-    new URLSearchParams(window.location.search).get("auth_error");
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setAuthError(new URLSearchParams(window.location.search).has("auth_error"));
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
