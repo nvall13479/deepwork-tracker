@@ -1,36 +1,66 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ⚡ Deep Work Tracker
 
-## Getting Started
+Next.js app (App Router) για παρακολούθηση deep work: check-in ανά διαστημα (default 2΄),
+κατηγορίες ON/OFF, ημερήσιος στόχος, αρχειοθέτηση ημέρας σε ιστορικό.
+Διατηρεί το state στο **Supabase** ( μία γραμμή JSON) + **localStorage mirror**.
 
-First, run the development server:
+## Local setup
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+cp .env.example .env.local   # βάλε τα πραγματικά values
+npm run dev                  # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Τα env values (Project URL + publishable key) βρίσκονται στο Supabase Dashboard →
+Settings → General / API Keys.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+**Προσοχή:** το publishable key client-side είναι public· χωρίς RLS, όποιος έχει το URL
+μπορεί να αλλοιώσει τα δεδομένα. Δες `supabase/rls.sql` για την κλείδωμα.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Supabase
 
-## Learn More
+Tables (βλ. `supabase/schema.sql`):
 
-To learn more about Next.js, take a look at the following resources:
+| table | ρόλος |
+|-------|-------|
+| `productivity_logs` | μία γραμμή id=1, `data jsonb` = ολόκληρη η κατάσταση tracker |
+| `daily_history` | αρχειοθετημένες ημέρες — το upsert απαιτεί **unique index στο `date`** |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Scripts
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm run dev         # development
+npm run build       # production build
+npm run lint        # eslint
+npm run typecheck   # tsc --noEmit
+npm test            # vitest (logic tests)
+```
 
-## Deploy on Vercel
+## Δομή
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```
+app/                  layout + page (client orchestrator)
+src/lib/              tracker logic (pure, tested), supabase, dates, tabs, notify
+src/components/       GoalBanner, CheckinModal, HistoryTable, SettingsPanel, ...
+tests/unit/           vitest unit tests
+supabase/             schema.sql, rls.sql
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Λειτουργία
+
+- **Έναρξη συνεδρίας** → tick loop κάθε 1΄ υπολογίζει τον countdown από **timestamps**
+  (όχι ticks): αν το tab παγώσει/frozen, το επόμενο check-in μετράει το πραγματικό
+  elapsed (max 5΄). Έτσι δεν χάνεται χρόνος σε background tabs.
+- **Check-in prompt** κάθε `intervalSec`: επιλέγεις κατηγορία· αν δεν απαντήσεις σε 10",
+  εφαρμόζεται το ρυθμισμένο default (ON/OFF) — τα auto ON μετρώνται ξεχωριστά
+  ("από τα Χ αυτόματα check-in").
+- **Aλλαγή ημέρας**: live rollover ακόμα και με ανοιχτό tab (έλεγχος σε κάθε tick,
+  τοπική ημερομηνία, όχι UTC).
+- **Πολλαπλά tabs**: Web Locks — μόνο το πρώτο tab γράφει· τα υπόλοιπα read-only.
+- **Cloud σφάλματα**: load failure → fallback σε τοπικό mirror (χωρίς overwrite του
+  cloud)· save failure → banner + exponential backoff retry.
+
+## Deployment
+
+Ιδανικό: Vercel (NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY στο project).

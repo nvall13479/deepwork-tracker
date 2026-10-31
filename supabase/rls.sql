@@ -1,0 +1,31 @@
+-- Deep Work Tracker — Σκληρή πρόσβαση (βλ. improvements.md #9)
+--
+-- Η τρέχουσα εγκατάσταση ΔΕΝ έχει RLS: όποιος γνωρίζει το project URL + publishable
+-- key μπορεί να διαβάσει/γράψει τα δεδομένα. Το app είναι single-user, οπότε το
+-- ελάχιστο μερίδιο κινδύνου είναι ήδη μικρό, αλλά για σοβαρή χρήση:
+--
+-- ΕΠΙΛΟΓΗ Α (γρήγορη, χωρίς auth UI): κλείδωσε την εγγραφή μόνο στη γραμμή id=1
+-- και στις δικές σου μερίδες ημερομηνιών — δεν αποτρέπει κάποιον που ψάξει,
+-- αλλά σταματά τυχαία/κακόβουλη γραφή σε other rows.
+--
+--   alter table public.productivity_logs enable row level security;
+--   alter table public.daily_history enable row level security;
+--   create policy "tracker_rw" on public.productivity_logs
+--     for all using (id = 1) with check (id = 1);
+--   create policy "history_rw" on public.daily_history
+--     for all using (true) with check (true);
+--
+-- ΕΠΙΛΟΓΗ Β (σωστή): Supabase Auth (π.χ. magic link) + user_id column.
+-- Προαπαιτούμενα κώδικα: login UI, `user_id` στα tables, policies παρακάτω.
+--
+--   alter table public.productivity_logs add column if not exists user_id uuid not null default auth.uid();
+--   alter table public.daily_history    add column if not exists user_id uuid not null default auth.uid();
+--   alter table public.productivity_logs enable row level security;
+--   alter table public.daily_history enable row level security;
+--   drop policy if exists "tracker_rw" on public.productivity_logs;
+--   create policy "own_tracker" on public.productivity_logs
+--     for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+--   create policy "own_history" on public.daily_history
+--     for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+select 'Διάβασε το αρχείο και εφάρμοσε την ΕΠΙΛΟΓΗ Α ή Β από το SQL Editor.' as info;
